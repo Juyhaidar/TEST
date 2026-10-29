@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Misteri Gedong Tua - Resident Betawi 3D</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Courier Prime', monospace;
+            background-color: #000;
+            color: #d1d5db;
+            user-select: none;
+            overflow: hidden;
+            margin: 0;
+        }
+
+        /* Vignette overlay */
+        .vignette {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.9);
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        /* CRT Scanline Overlay */
+        .crt::after {
+            content: " ";
+            display: block;
+            position: fixed;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.3) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+            z-index: 10;
+            background-size: 100% 3px, 3px 100%;
+            pointer-events: none;
+        }
+
+        /* Crosshair */
+        .crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 12px;
+            height: 12px;
+            margin-top: -6px;
+            margin-left: -6px;
+            pointer-events: none;
+            z-index: 20;
+            transition: transform 0.1s ease;
+        }
+        .crosshair::before, .crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(239, 68, 68, 0.85);
+        }
+        .crosshair::before {
+            top: 5px; left: 0; width: 12px; height: 2px;
+        }
+        .crosshair::after {
+            top: 0; left: 5px; width: 2px; height: 12px;
+        }
+
+        /* Blood Splatter FX */
+        #damage-flash {
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle, rgba(185, 28, 28, 0) 40%, rgba(185, 28, 28, 0.7) 100%);
+            opacity: 0;
+            transition: opacity 0.2s ease-out;
+            pointer-events: none;
+            z-index: 15;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #991b1b; border-radius: 3px; }
+    </style>
+</head>
+<body class="crt w-screen h-screen relative bg-black">
+
+    <!-- 3D Canvas Container -->
+    <div id="canvas-container" class="w-full h-full absolute inset-0 cursor-crosshair"></div>
+
+    <!-- Vignette Effect Layer -->
+    <div class="vignette"></div>
+
+    <!-- Damage Screen Flash -->
+    <div id="damage-flash"></div>
+
+    <!-- Reticle Crosshair -->
+    <div id="crosshair" class="crosshair"></div>
+
+    <!-- HUD Overlay -->
+    <div class="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 md:p-6 z-20">
+        
+        <!-- Top Bar: Game Stats & Dev Info -->
+        <header class="flex justify-between items-start text-xs md:text-sm font-bold tracking-wider">
+            <!-- Health & Location -->
+            <div class="bg-black/85 border-2 border-red-900/80 px-4 py-2 rounded shadow-lg backdrop-blur space-y-1">
+                <div class="text-neutral-400">LOKASI: <span id="location-text" class="text-white">Gedong Depan</span></div>
+                <div class="flex items-center space-x-2">
+                    <span class="text-red-500">KONDISI:</span>
+                    <div class="w-28 md:w-36 h-3 bg-neutral-800 border border-neutral-600 rounded overflow-hidden">
+                        <div id="hp-bar" class="h-full bg-emerald-500 transition-all duration-300" style="width: 100%;"></div>
+                    </div>
+                    <span id="hp-num" class="text-white text-xs">100%</span>
+                </div>
+            </div>
+
+            <!-- Developer Tag & Ammo Count -->
+            <div class="flex flex-col items-end space-y-2">
+                <div class="bg-black/85 border-2 border-red-900/80 px-4 py-2 rounded shadow-lg backdrop-blur text-right">
+                    <div class="text-xs text-red-500 font-extrabold tracking-widest uppercase">DEV: @newtoen</div>
+                    <div class="text-neutral-400 text-xs">KUNCI: <span id="key-text" class="text-yellow-400 font-bold">Kaga Ada</span></div>
+                </div>
+
+                <div class="bg-black/85 border-2 border-red-900/80 px-4 py-2 rounded shadow-lg backdrop-blur flex items-baseline space-x-2">
+                    <span class="text-neutral-400 text-xs uppercase">PELOR:</span>
+                    <span id="ammo-count" class="text-2xl font-black text-yellow-400">12</span>
+                    <span class="text-neutral-500 text-xs">/ <span id="reserve-ammo">30</span></span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Dynamic Interaction Prompt -->
+        <div id="interact-prompt" class="self-center bg-red-950/90 border border-red-500 text-white text-xs md:text-sm px-4 py-2 rounded shadow-xl tracking-wider uppercase font-bold animate-pulse hidden">
+            Pencet <span class="text-yellow-300 font-black">[E]</span> - <span id="interact-action">PILIH BARANG</span>
+        </div>
+
+        <!-- Dialogue & Subtitle Box -->
+        <div id="dialogue-box" class="self-center w-full max-w-2xl bg-black/90 border-2 border-red-800 p-4 rounded-lg shadow-2xl backdrop-blur transition-all duration-200 hidden">
+            <div class="flex justify-between items-center mb-1">
+                <span id="speaker-name" class="text-red-500 font-bold text-xs uppercase tracking-widest">BANG ABANG</span>
+                <span class="text-neutral-500 text-[10px]">BETAWI SURVIVAL</span>
+            </div>
+            <p id="dialogue-text" class="text-neutral-200 text-sm md:text-base leading-relaxed italic"></p>
+        </div>
+    </div>
+
+    <!-- START SCREEN OVERLAY -->
+    <div id="start-overlay" class="absolute inset-0 bg-black/95 z-30 flex flex-col items-center justify-center p-6 text-center">
+        <div class="max-w-xl bg-neutral-950 border-2 border-red-900 p-6 md:p-8 rounded-xl shadow-2xl relative">
+            <div class="text-red-700 text-xs font-bold tracking-widest mb-1 uppercase">RESIDENT BETAWI SURVIVAL HORROR</div>
+            <h1 class="text-3xl md:text-5xl font-black text-red-600 mb-2 tracking-widest drop-shadow-[0_4px_10px_rgba(220,38,38,0.5)]">MISTERI GEDONG TUA</h1>
+            <p class="text-neutral-400 text-xs md:text-sm mb-6 leading-relaxed">
+                Lu kejebak di dalem gedong tua berhantu yang pinternya kaga ketulungan. Cari Kunci Merah buat nembus pintu Laboratorium Rahasia, bawa kabur Serum Penawar sebelum lu dikeroyok hantu pocong sama setan kampung!
+            </p>
+
+            <div class="bg-neutral-900 border border-neutral-800 p-4 rounded text-left text-xs text-neutral-300 mb-6 space-y-1.5">
+                <div class="text-red-400 font-bold mb-1 uppercase tracking-wider">KONTROL PERMAINAN (OVER-THE-SHOULDER 3D):</div>
+                <div><span class="text-yellow-400 font-bold">W, A, S, D</span> : Jalan Bang Abang</div>
+                <div><span class="text-yellow-400 font-bold">MOUSE</span> : Arahin Kamera / Pandangan</div>
+                <div><span class="text-yellow-400 font-bold">KLIK KANAN</span> : Bidik Pistol (Zoom Overhead)</div>
+                <div><span class="text-yellow-400 font-bold">KLIK KIRI</span> : Tembak Pistol</div>
+                <div><span class="text-yellow-400 font-bold">TOMBOL E</span> : Ambil Barang / Buka Pintu</div>
+                <div><span class="text-yellow-400 font-bold">TOMBOL R</span> : Reload Pelor</div>
+                <div><span class="text-yellow-400 font-bold">SHIFT</span> : Lari Kenceng</div>
+            </div>
+
+            <div class="text-xs text-neutral-500 mb-4">Didevelop khusus oleh: <span class="text-red-400 font-bold">@newtoen</span></div>
+
+            <button onclick="startGame()" class="pointer-events-auto px-8 py-3 bg-red-800 hover:bg-red-700 text-white font-bold rounded border border-red-500 shadow-lg transition-all transform hover:scale-105 tracking-wider uppercase">
+                MULAI KABUR, BANG!
+            </button>
+        </div>
+    </div>
+
+    <!-- GAME OVER SCREEN -->
+    <div id="gameover-overlay" class="absolute inset-0 bg-red-950/95 z-30 flex flex-col items-center justify-center p-6 text-center hidden">
+        <h1 class="text-5xl md:text-7xl font-black text-white mb-2 tracking-widest drop-shadow-[0_5px_15px_rgba(0,0,0,0.9)]">LU KEOK, BRO!</h1>
+        <p id="death-reason" class="text-neutral-300 text-sm md:text-base mb-6 max-w-md">Badan lu abis digigitin setan kampung ampe kaga berwujud lagi. Mampus lu!</p>
+        <button onclick="restartGame()" class="pointer-events-auto px-8 py-3 bg-white hover:bg-neutral-200 text-red-950 font-black rounded border border-neutral-400 shadow-2xl transition transform hover:scale-105 tracking-wider uppercase">
+            COBA LAGI, JANGAN MENYERAH
+        </button>
+    </div>
+
+    <!-- VICTORY SCREEN -->
+    <div id="victory-overlay" class="absolute inset-0 bg-emerald-950/95 z-30 flex flex-col items-center justify-center p-6 text-center hidden">
+        <h1 class="text-4xl md:text-6xl font-black text-emerald-400 mb-2 tracking-widest">SELAMAT! LU SELAMET!</h1>
+        <p class="text-neutral-200 text-sm md:text-base mb-6 max-w-lg">
+            Lu berhasil nemuin Serum Penawar Utama dan kabur dari Gedong Tua! Bantuan petunjuk dari <span class="text-yellow-300 font-bold">@newtoen</span> bikin lu tetep idup hari ini!
+        </p>
+        <button onclick="restartGame()" class="pointer-events-auto px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-black rounded border border-emerald-300 shadow-2xl transition transform hover:scale-105 tracking-wider uppercase">
+            MAIN LAGI DARI AWAL
+        </button>
+    </div>
+
+    <script>
+        // Game Engine Variables
+        let scene, camera, renderer;
+        let playerGroup, playerMesh, flashlight, pistolMesh;
+        let gameStarted = false;
+        let isDead = false;
+        let isWon = false;
+        let pointerLocked = false;
+
+        // Player State & Stats
+        let player = {
+            hp: 100,
+            maxHp: 100,
+            ammo: 12,
+            maxAmmo: 12,
+            reserveAmmo: 30,
+            hasKey: false,
+            speed: 0.12,
+            sprintSpeed: 0.2,
+            rotationY: 0,
+            pitchAngle: 0,
+            isAiming: false,
+            isMoving: false,
+            animTimer: 0
+        };
+
+        // Inputs
+        const keys = {};
+        let mouseDX = 0, mouseDY = 0;
+
+        // Audio System (Synthesized Web Audio API)
+        let audioCtx;
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        function playSound(type) {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+
+            if (type === 'gunshot') {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(450, now);
+                osc.frequency.exponentialRampToValueAtTime(30, now + 0.18);
+                gain.gain.setValueAtTime(0.5, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.18);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + 0.18);
+            } else if (type === 'reload') {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(200, now);
+                osc.frequency.linearRampToValueAtTime(500, now + 0.15);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + 0.2);
+            } else if (type === 'zombieHurt') {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(90, now);
+                osc.frequency.linearRampToValueAtTime(40, now + 0.25);
+                gain.gain.setValueAtTime(0.4, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + 0.25);
+            } else if (type === 'playerHurt') {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, now);
+                osc.frequency.linearRampToValueAtTime(50, now + 0.3);
+                gain.gain.setValueAtTime(0.6, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            } else if (type === 'pickup') {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(400, now);
+                osc.frequency.exponentialRampToValueAtTime(800, now + 0.15);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + 0.15);
+            }
+        }
+
+        // World Data: Rooms, Walls, Items, Enemies
+        let zombies = [];
+        let interactables = [];
+        let walls = [];
+        let roomZones = [];
+
+        function initThreeEngine() {
+            const container = document.getElementById('canvas-container');
+
+            // Scene setup with atmospheric dark fog
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x020203);
+            scene.fog = new THREE.FogExp2(0x020203, 0.08);
+
+            // Camera setup
+            camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 100);
+
+            // Renderer setup
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            // Ambient darkness light
+            const ambientLight = new THREE.AmbientLight(0x1a1a24, 0.4);
+            scene.add(ambientLight);
+
+            // Build Player Avatar & Build Mansion Map
+            createPlayerAvatar();
+            buildMansionMap();
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize);
+            setupInputHandlers();
+
+            // Render loop
+            animate();
+        }
+
+        // Build Procedural 3D Humanoid Avatar (Behind-The-Shoulder View)
+        function createPlayerAvatar() {
+            playerGroup = new THREE.Group();
+            scene.add(playerGroup);
+
+            // Avatar Body Container
+            playerMesh = new THREE.Group();
+            playerGroup.add(playerMesh);
+
+            // Materials
+            const skinMat = new THREE.MeshStandardMaterial({ color: 0xeb9875, roughness: 0.6 });
+            const jacketMat = new THREE.MeshStandardMaterial({ color: 0x1e3a1e, roughness: 0.8 }); // Betawi Green Tactical Jacket
+            const pantsMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.9 });
+            const peciMat = new THREE.MeshStandardMaterial({ color: 0x991b1b, roughness: 0.5 }); // Red Peci / Bandana
+            const gunMat = new THREE.MeshStandardMaterial({ color: 0x27272a, metalness: 0.8, roughness: 0.2 });
+
+            // Torso (Jacket)
+            const torsoGeo = new THREE.BoxGeometry(0.5, 0.75, 0.3);
+            const torso = new THREE.Mesh(torsoGeo, jacketMat);
+            torso.position.y = 0.875;
+            torso.castShadow = true;
+            playerMesh.add(torso);
+
+            // Head
+            const headGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+            const head = new THREE.Mesh(headGeo, skinMat);
+            head.position.y = 1.4;
+            head.castShadow = true;
+            playerMesh.add(head);
+
+            // Red Peci (Betawi Cap)
+            const peciGeo = new THREE.BoxGeometry(0.32, 0.12, 0.32);
+            const peci = new THREE.Mesh(peciGeo, peciMat);
+            peci.position.y = 1.55;
+            peci.castShadow = true;
+            playerMesh.add(peci);
+
+            // Legs
+            const legGeo = new THREE.BoxGeometry(0.2, 0.7, 0.2);
+            const leftLeg = new THREE.Mesh(legGeo, pantsMat);
+            leftLeg.position.set(-0.13, 0.35, 0);
+            leftLeg.castShadow = true;
+            playerMesh.add(leftLeg);
+
+            const rightLeg = new THREE.Mesh(legGeo, pantsMat);
+            rightLeg.position.set(0.13, 0.35, 0);
+            rightLeg.castShadow = true;
+            playerMesh.add(rightLeg);
+
+            // Arms holding gun
+            const armGeo = new THREE.BoxGeometry(0.15, 0.5, 0.15);
+            const rightArm = new THREE.Mesh(armGeo, jacketMat);
+            rightArm.position.set(0.32, 0.85, 0.2);
+            rightArm.rotation.x = -Math.PI / 3;
+            rightArm.castShadow = true;
+            playerMesh.add(rightArm);
+
+            // Pistol Model
+            const pistolBodyGeo = new THREE.BoxGeometry(0.08, 0.12, 0.25);
+            pistolMesh = new THREE.Mesh(pistolBodyGeo, gunMat);
+            pistolMesh.position.set(0.32, 0.95, 0.42);
+            playerMesh.add(pistolMesh);
+
+            // Flashlight attached to player
+            flashlight = new THREE.SpotLight(0xfff5ea, 3.5, 18, Math.PI / 6, 0.4, 1);
+            flashlight.position.set(0.2, 1.2, 0.3);
+            flashlight.target.position.set(0, 1.2, 10);
+            flashlight.castShadow = true;
+            flashlight.shadow.mapSize.width = 1024;
+            flashlight.shadow.mapSize.height = 1024;
+            playerGroup.add(flashlight);
+            playerGroup.add(flashlight.target);
+
+            // Position player at entrance
+            playerGroup.position.set(0, 0, 8);
+        }
+
+        // Build 3D Mansion Environment
+        function buildMansionMap() {
+            const wallMat = new THREE.MeshStandardMaterial({ color: 0x262626, roughness: 0.9 });
+            const floorMat = new THREE.MeshStandardMaterial({ color: 0x171717, roughness: 0.7 });
+            const ceilingMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.9 });
+            const doorMat = new THREE.MeshStandardMaterial({ color: 0x7f1d1d, roughness: 0.6 });
+
+            function createRoom(x, z, width, depth, name) {
+                // Floor
+                const floorGeo = new THREE.PlaneGeometry(width, depth);
+                const floor = new THREE.Mesh(floorGeo, floorMat);
+                floor.rotation.x = -Math.PI / 2;
+                floor.position.set(x, 0, z);
+                floor.receiveShadow = true;
+                scene.add(floor);
+
+                // Ceiling
+                const ceiling = new THREE.Mesh(floorGeo, ceilingMat);
+                ceiling.rotation.x = Math.PI / 2;
+                ceiling.position.set(x, 3, z);
+                scene.add(ceiling);
+
+                roomZones.push({ x, z, width, depth, name });
+            }
+
+            function createWall(x, z, width, height, depth) {
+                const wallGeo = new THREE.BoxGeometry(width, height, depth);
+                const wall = new THREE.Mesh(wallGeo, wallMat);
+                wall.position.set(x, height / 2, z);
+                wall.castShadow = true;
+                wall.receiveShadow = true;
+                scene.add(wall);
+                walls.push(new THREE.Box3().setFromObject(wall));
+            }
+
+            // Room 1: Lobi Utama Gedong (Front Lobby)
+            createRoom(0, 5, 12, 12, 'Lobi Utama Gedong');
+            createWall(-6, 5, 0.4, 3, 12); // Left wall
+            createWall(6, 5, 0.4, 3, 12);  // Right wall
+            createWall(0, 11, 12, 3, 0.4); // Back wall
+            createWall(-3.5, -1, 5, 3, 0.4); // Front left wall
+            createWall(3.5, -1, 5, 3, 0.4);  // Front right wall
+
+            // Room 2: Koridor Gelap (Corridor)
+            createRoom(0, -7, 6, 12, 'Koridor Gelap');
+            createWall(-3, -7, 0.4, 3, 12); // Left corridor wall
+            createWall(3, -7, 0.4, 3, 12);  // Right corridor wall
+
+            // Room 3: Dapur Bekas Kebakaran (Kitchen)
+            createRoom(-8, -7, 8, 8, 'Dapur Tua Kebakaran');
+            createWall(-12, -7, 0.4, 3, 8); // Left wall
+            createWall(-8, -11, 8, 3, 0.4); // Back wall
+            createWall(-8, -3, 8, 3, 0.4);  // Front wall
+
+            // Room 4: Laboratorium Rahasia (Secret Lab)
+            createRoom(8, -7, 8, 8, 'Laboratorium Rahasia');
+            createWall(12, -7, 0.4, 3, 8); // Right wall
+            createWall(8, -11, 8, 3, 0.4); // Back wall
+            createWall(8, -3, 8, 3, 0.4);  // Front wall
+
+            // Locked Door to Secret Lab
+            const labDoorGeo = new THREE.BoxGeometry(0.3, 2.5, 2);
+            const labDoor = new THREE.Mesh(labDoorGeo, doorMat);
+            labDoor.position.set(4, 1.25, -7);
+            scene.add(labDoor);
+
+            // Flickering Mansion Dim Lights
+            createDimLamp(0, 2.6, 5, 0xffaa44);
+            createDimLamp(-8, 2.6, -7, 0xff3333);
+            createDimLamp(8, 2.6, -7, 0x3388ff);
+
+            // Spawn Interactables & Key Items
+            spawnInteractable(0.2, 0.3, 8, 'note', "Catatan Lusuh: 'Kalo mau keluar hidup-hidup, cari Kunci Merah di Dapur terus buka pintu Laboratorium Rahasia!' - @newtoen");
+            spawnInteractable(-2, 0.3, 3, 'ammo', "10 Pelor Pistol Exstra");
+            spawnInteractable(3, 0.3, 2, 'herb', "Daun Obat Segar (Kesehatan)");
+            spawnInteractable(-9, 0.3, -8, 'key', "Kunci Merah Laboratorium");
+            spawnInteractable(9, 0.3, -7, 'victory', "Serum Penawar Utama");
+
+            // Spawn 3D Zombie Monsters
+            spawnZombie(0, 0, 2, false);
+            spawnZombie(-2, 0, -5, false);
+            spawnZombie(-8, 0, -6, false);
+            spawnZombie(7, 0, -8, true); // Boss Zombie
+        }
+
+        function createDimLamp(x, y, z, colorHex) {
+            const light = new THREE.PointLight(colorHex, 0.8, 8);
+            light.position.set(x, y, z);
+            scene.add(light);
+
+            const bulbGeo = new THREE.SphereGeometry(0.1, 8, 8);
+            const bulbMat = new THREE.MeshBasicMaterial({ color: colorHex });
+            const bulb = new THREE.Mesh(bulbGeo, bulbMat);
+            bulb.position.set(x, y, z);
+            scene.add(bulb);
+        }
+
+        function spawnInteractable(x, y, z, type, label) {
+            let geo, mat;
+            if (type === 'ammo') {
+                geo = new THREE.BoxGeometry(0.3, 0.2, 0.3);
+                mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.5 });
+            } else if (type === 'herb') {
+                geo = new THREE.SphereGeometry(0.2, 8, 8);
+                mat = new THREE.MeshStandardMaterial({ color: 0x10b981 });
+            } else if (type === 'key') {
+                geo = new THREE.BoxGeometry(0.2, 0.1, 0.4);
+                mat = new THREE.MeshStandardMaterial({ color: 0xef4444, metalness: 0.8 });
+            } else if (type === 'victory') {
+                geo = new THREE.CylinderGeometry(0.15, 0.15, 0.4, 8);
+                mat = new THREE.MeshStandardMaterial({ color: 0xa855f7, emissive: 0x581c87 });
+            } else {
+                geo = new THREE.BoxGeometry(0.3, 0.05, 0.4);
+                mat = new THREE.MeshStandardMaterial({ color: 0xfef08a });
+            }
+
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(x, y, z);
+            mesh.castShadow = true;
+            scene.add(mesh);
+
+            interactables.push({ mesh, type, label, collected: false, x, z });
+        }
+
+        // Build 3D Zombie Creature Avatar
+        function spawnZombie(x, y, z, isBoss = false) {
+            const zGroup = new THREE.Group();
+
+            const bodyMat = new THREE.MeshStandardMaterial({ 
+                color: isBoss ? 0x4c1d95 : 0x14532d, 
+                roughness: 0.8 
+            });
+            const headMat = new THREE.MeshStandardMaterial({ 
+                color: isBoss ? 0x2e1065 : 0x064e3b, 
+                roughness: 0.6 
+            });
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+
+            const scale = isBoss ? 1.4 : 1.0;
+
+            // Torso
+            const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5 * scale, 0.8 * scale, 0.3 * scale), bodyMat);
+            torso.position.y = 0.9 * scale;
+            torso.castShadow = true;
+            zGroup.add(torso);
+
+            // Head
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.35 * scale, 0.35 * scale, 0.35 * scale), headMat);
+            head.position.y = 1.5 * scale;
+            head.castShadow = true;
+            zGroup.add(head);
+
+            // Glowing Eyes
+            const eye1 = new THREE.Mesh(new THREE.BoxGeometry(0.06 * scale, 0.06 * scale, 0.06 * scale), eyeMat);
+            eye1.position.set(-0.09 * scale, 1.52 * scale, 0.18 * scale);
+            zGroup.add(eye1);
+
+            const eye2 = new THREE.Mesh(new THREE.BoxGeometry(0.06 * scale, 0.06 * scale, 0.06 * scale), eyeMat);
+            eye2.position.set(0.09 * scale, 1.52 * scale, 0.18 * scale);
+            zGroup.add(eye2);
+
+            // Reaching Arms
+            const armGeo = new THREE.BoxGeometry(0.14 * scale, 0.6 * scale, 0.14 * scale);
+            const leftArm = new THREE.Mesh(armGeo, bodyMat);
+            leftArm.position.set(-0.35 * scale, 1.1 * scale, 0.25 * scale);
+            leftArm.rotation.x = -Math.PI / 2.5;
+            zGroup.add(leftArm);
+
+            const rightArm = new THREE.Mesh(armGeo, bodyMat);
+            rightArm.position.set(0.35 * scale, 1.1 * scale, 0.25 * scale);
+            rightArm.rotation.x = -Math.PI / 2.5;
+            zGroup.add(rightArm);
+
+            zGroup.position.set(x, y, z);
+            scene.add(zGroup);
+
+            zombies.push({
+                group: zGroup,
+                hp: isBoss ? 120 : 45,
+                maxHp: isBoss ? 120 : 45,
+                speed: isBoss ? 0.038 : 0.025,
+                attackCd: 0,
+                isBoss: isBoss,
+                hitRadius: 0.6 * scale
+            });
+        }
+
+        // Input Setup
+        function setupInputHandlers() {
+            window.addEventListener('keydown', (e) => {
+                keys[e.code] = true;
+                if (e.code === 'KeyE') handleInteraction();
+                if (e.code === 'KeyR') reloadWeapon();
+            });
+
+            window.addEventListener('keyup', (e) => {
+                keys[e.code] = false;
+            });
+
+            window.addEventListener('mousedown', (e) => {
+                if (!gameStarted || isDead || isWon) return;
+
+                if (!pointerLocked) {
+                    document.body.requestPointerLock();
+                    return;
+                }
+
+                if (e.button === 2) { // Right Click ADS / Aim
+                    player.isAiming = true;
+                } else if (e.button === 0) { // Left Click Shoot
+                    shootWeapon();
+                }
+            });
+
+            window.addEventListener('mouseup', (e) => {
+                if (e.button === 2) {
+                    player.isAiming = false;
+                }
+            });
+
+            document.addEventListener('pointerlockchange', () => {
+                pointerLocked = document.pointerLockElement === document.body;
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!pointerLocked || isDead || isWon) return;
+                
+                // Sensitivity
+                const sens = 0.0022;
+                player.rotationY -= e.movementX * sens;
+                player.pitchAngle -= e.movementY * sens;
+
+                // Clamp pitch
+                player.pitchAngle = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, player.pitchAngle));
+            });
+        }
+
+        function startGame() {
+            initAudio();
+            document.getElementById('start-overlay').classList.add('hidden');
+            gameStarted = true;
+            document.body.requestPointerLock();
+            triggerDialogue("Buset dah... Gedong tua gelap amat! Gua kudu cari jalan keluar kaga pake lama!");
+        }
+
+        function restartGame() {
+            location.reload();
+        }
+
+        function triggerDialogue(text, duration = 4000) {
+            const box = document.getElementById('dialogue-box');
+            const txt = document.getElementById('dialogue-text');
+            txt.innerText = `"${text}"`;
+            box.classList.remove('hidden');
+
+            clearTimeout(box.timer);
+            box.timer = setTimeout(() => {
+                box.classList.add('hidden');
+            }, duration);
+        }
+
+        function shootWeapon() {
+            if (player.ammo <= 0) {
+                playSound('reload');
+                triggerDialogue("Aduh berabe, pelor gua abis! Buka [R] buat reload atau cari cadangan!");
+                return;
+            }
+
+            player.ammo--;
+            updateHUD();
+            playSound('gunshot');
+
+            // Recoil
+            player.pitchAngle += 0.05;
+
+            // Raycast Shoot Target
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+
+            const zombieMeshes = zombies.map(z => z.group);
+            const intersects = raycaster.intersectObjects(zombieMeshes, true);
+
+            if (intersects.length > 0) {
+                const hitObj = intersects[0].object;
+                let hitZombie = zombies.find(z => z.group.children.includes(hitObj) || z.group === hitObj.parent);
+
+                if (hitZombie) {
+                    hitZombie.hp -= 20;
+                    playSound('zombieHurt');
+                    createBloodSplatter(intersects[0].point);
+
+                    // Knockback
+                    const dir = new THREE.Vector3().subVectors(hitZombie.group.position, playerGroup.position).normalize();
+                    hitZombie.group.position.addScaledVector(dir, 0.3);
+
+                    if (hitZombie.hp <= 0) {
+                        scene.remove(hitZombie.group);
+                        zombies = zombies.filter(z => z !== hitZombie);
+                        triggerDialogue("Mampus lu setan! Kaga mempan lawan mahluk Betawi!");
+                    }
+                }
+            }
+        }
+
+        function reloadWeapon() {
+            if (player.reserveAmmo <= 0 || player.ammo === player.maxAmmo) return;
+            playSound('reload');
+            const needed = player.maxAmmo - player.ammo;
+            const reloadAmount = Math.min(needed, player.reserveAmmo);
+            player.ammo += reloadAmount;
+            player.reserveAmmo -= reloadAmount;
+            updateHUD();
+            triggerDialogue("Isi ulang pelor dulu, sikat kaga pake kendor!");
+        }
+
+        function createBloodSplatter(pos) {
+            const pCount = 12;
+            const pGeo = new THREE.BufferGeometry();
+            const positions = [];
+
+            for (let i = 0; i < pCount; i++) {
+                positions.push(
+                    pos.x + (Math.random() - 0.5) * 0.2,
+                    pos.y + (Math.random() - 0.5) * 0.2,
+                    pos.z + (Math.random() - 0.5) * 0.2
+                );
+            }
+
+            pGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            const pMat = new THREE.PointsMaterial({ color: 0xb91c1c, size: 0.08 });
+            const pSystem = new THREE.Points(pGeo, pMat);
+            scene.add(pSystem);
+
+            setTimeout(() => scene.remove(pSystem), 350);
+        }
+
+        function handleInteraction() {
+            for (let item of interactables) {
+                if (item.collected) continue;
+                const dist = playerGroup.position.distanceTo(item.mesh.position);
+                if (dist < 1.8) {
+                    item.collected = true;
+                    scene.remove(item.mesh);
+                    playSound('pickup');
+
+                    if (item.type === 'note') {
+                        triggerDialogue(item.label, 6000);
+                    } else if (item.type === 'ammo') {
+                        player.reserveAmmo += 15;
+                        triggerDialogue("Nemu pelor pistol! Lumayan banget ini mah!");
+                    } else if (item.type === 'herb') {
+                        player.hp = Math.min(player.maxHp, player.hp + 40);
+                        triggerDialogue("Mangan Daun Obat, badan kerasa segeran!");
+                    } else if (item.type === 'key') {
+                        player.hasKey = true;
+                        document.getElementById('key-text').innerText = 'Kunci Merah';
+                        triggerDialogue("Dapet Kunci Merah! Pintu Laboratorium sekarang udah bisa dibuka!");
+                    } else if (item.type === 'victory') {
+                        isWon = true;
+                        document.exitPointerLock();
+                        document.getElementById('victory-overlay').classList.remove('hidden');
+                    }
+                    updateHUD();
+                    return;
+                }
+            }
+        }
+
+        function updateHUD() {
+            document.getElementById('hp-bar').style.width = `${player.hp}%`;
+            document.getElementById('hp-num').innerText = `${player.hp}%`;
+            document.getElementById('ammo-count').innerText = player.ammo;
+            document.getElementById('reserve-ammo').innerText = player.reserveAmmo;
+        }
+
+        function updatePlayerLogic() {
+            if (!gameStarted || isDead || isWon) return;
+
+            // Update Player Rotation
+            playerGroup.rotation.y = player.rotationY;
+
+            // Movement relative to camera facing
+            let moveSpeed = keys['ShiftLeft'] ? player.sprintSpeed : player.speed;
+            let moveZ = 0, moveX = 0;
+
+            if (keys['KeyW'] || keys['ArrowUp']) moveZ += 1;
+            if (keys['KeyS'] || keys['ArrowDown']) moveZ -= 1;
+            if (keys['KeyA'] || keys['ArrowLeft']) moveX += 1;
+            if (keys['KeyD'] || keys['ArrowRight']) moveX -= 1;
+
+            player.isMoving = (moveZ !== 0 || moveX !== 0);
+
+            if (player.isMoving) {
+                const moveVector = new THREE.Vector3(moveX, 0, moveZ).normalize();
+                moveVector.applyAxisAngle(new THREE.Vector3(0, 1, 0), player.rotationY);
+
+                const nextPos = playerGroup.position.clone().addScaledVector(moveVector, moveSpeed);
+
+                // Simple Boundary Collision Check
+                let col = false;
+                for (let wallBox of walls) {
+                    if (wallBox.containsPoint(nextPos)) {
+                        col = true;
+                        break;
+                    }
+                }
+
+                if (!col) {
+                    playerGroup.position.copy(nextPos);
+                }
+
+                // Footstep sway animation
+                player.animTimer += 0.15;
+                playerMesh.position.y = Math.sin(player.animTimer) * 0.04;
+            } else {
+                playerMesh.position.y = 0;
+            }
+
+            // OVER-THE-SHOULDER CAMERA CONTROLLER (Resident Evil 8 / RE Village style)
+            const targetFov = player.isAiming ? 45 : 65;
+            camera.fov += (targetFov - camera.fov) * 0.1;
+            camera.updateProjectionMatrix();
+
+            // Camera offset relative to shoulder
+            const camOffset = player.isAiming 
+                ? new THREE.Vector3(0.4, 1.45, -1.2)  // Close Aim ADS
+                : new THREE.Vector3(0.65, 1.6, -2.4); // Standard Over-The-Shoulder
+
+            camOffset.applyAxisAngle(new THREE.Vector3(1, 0, 0), player.pitchAngle);
+            camOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), player.rotationY);
+
+            const camPos = playerGroup.position.clone().add(camOffset);
+            camera.position.copy(camPos);
+
+            // Camera Look Target Ahead
+            const lookTarget = playerGroup.position.clone().add(new THREE.Vector3(0, 1.4, 5).applyAxisAngle(new THREE.Vector3(1, 0, 0), player.pitchAngle).applyAxisAngle(new THREE.Vector3(0, 1, 0), player.rotationY));
+            camera.lookAt(lookTarget);
+
+            // Update Flashlight orientation
+            flashlight.target.position.copy(lookTarget);
+
+            // Check Zone location
+            for (let z of roomZones) {
+                if (Math.abs(playerGroup.position.x - z.x) < z.width / 2 && Math.abs(playerGroup.position.z - z.z) < z.depth / 2) {
+                    document.getElementById('location-text').innerText = z.name;
+                    break;
+                }
+            }
+
+            // Check Interaction Prompts
+            let nearInteract = false;
+            for (let item of interactables) {
+                if (!item.collected && playerGroup.position.distanceTo(item.mesh.position) < 1.8) {
+                    nearInteract = true;
+                    document.getElementById('interact-action').innerText = item.label;
+                    break;
+                }
+            }
+
+            const promptEl = document.getElementById('interact-prompt');
+            if (nearInteract) promptEl.classList.remove('hidden');
+            else promptEl.classList.add('hidden');
+        }
+
+        function updateZombiesLogic() {
+            if (!gameStarted || isDead || isWon) return;
+
+            for (let z of zombies) {
+                const zPos = z.group.position;
+                const pPos = playerGroup.position;
+                const dist = zPos.distanceTo(pPos);
+
+                // Look at Player
+                z.group.lookAt(pPos.x, zPos.y, pPos.z);
+
+                // Chase Player
+                if (dist < 10) {
+                    const dir = new THREE.Vector3().subVectors(pPos, zPos).normalize();
+                    zPos.addScaledVector(dir, z.speed);
+
+                    // Attack Player
+                    if (dist < z.hitRadius + 0.4) {
+                        if (z.attackCd <= 0) {
+                            z.attackCd = 60; // Cooldown
+                            player.hp -= z.isBoss ? 30 : 15;
+                            playSound('playerHurt');
+                            updateHUD();
+
+                            // Damage FX Flash
+                            const flash = document.getElementById('damage-flash');
+                            flash.style.opacity = '1';
+                            setTimeout(() => flash.style.opacity = '0', 300);
+
+                            if (player.hp <= 0) {
+                                isDead = true;
+                                document.exitPointerLock();
+                                document.getElementById('gameover-overlay').classList.remove('hidden');
+                            } else {
+                                triggerDialogue("Aduh koplak! Gua digigit hantu pocong!");
+                            }
+                        }
+                    }
+                }
+
+                if (z.attackCd > 0) z.attackCd--;
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            updatePlayerLogic();
+            updateZombiesLogic();
+            renderer.render(scene, camera);
+        }
+
+        window.onload = function() {
+            initThreeEngine();
+        };
+    </script>
+</body>
+</html>
